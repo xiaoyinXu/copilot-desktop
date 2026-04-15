@@ -86,8 +86,13 @@
 
       <!-- Input Area -->
       <div class="input-area">
+        <!-- Slash Command Popup -->
+        <div id="slash-popup" class="slash-popup" style="display:none;">
+          <div class="slash-popup-header">可用命令</div>
+          <div id="slash-list" class="slash-list"></div>
+        </div>
         <div class="input-wrapper">
-          <textarea id="prompt-input" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)" rows="1"></textarea>
+          <textarea id="prompt-input" placeholder="输入消息... (Enter 发送, Shift+Enter 换行, / 查看命令)" rows="1"></textarea>
           <div class="input-actions">
             <button id="abort-btn" class="action-btn abort-btn" style="display:none;" title="停止生成">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
