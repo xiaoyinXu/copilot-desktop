@@ -10,7 +10,7 @@ const shared = {
   bundle: true,
   platform: "node",
   target: "node20",
-  external: ["electron"],
+  external: ["electron", "@github/copilot-sdk"],
   sourcemap: true,
   logLevel: "info",
 };
