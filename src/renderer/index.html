@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Copilot Desktop</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header drag-region">
+        <div class="logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="currentColor"/>
+          </svg>
+          <span>Copilot Desktop</span>
+        </div>
+        <button id="new-chat-btn" title="新建对话">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-label">工作目录</div>
+        <button id="open-folder-btn" class="folder-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span id="cwd-label">选择文件夹...</span>
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-label">模型</div>
+        <select id="model-select">
+          <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
+          <option value="gpt-5">GPT-5</option>
+          <option value="claude-sonnet-4">Claude Sonnet 4</option>
+          <option value="gpt-4.1">GPT-4.1</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section sessions-section">
+        <div class="section-label">历史会话</div>
+        <div id="sessions-list"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div id="status" class="status-indicator">
+          <span class="status-dot"></span>
+          <span class="status-text">正在初始化...</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main id="chat-area">
+      <div class="chat-header drag-region">
+        <div id="session-info">新对话</div>
+      </div>
+
+      <!-- Welcome Screen -->
+      <div id="welcome" class="welcome-screen">
+        <div class="welcome-icon">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="currentColor"/>
+          </svg>
+        </div>
+        <h1>Copilot Desktop</h1>
+        <p>基于 GitHub Copilot SDK 的桌面编码助手</p>
+        <div class="welcome-hints">
+          <button class="hint-btn" data-prompt="帮我分析当前项目的代码结构">📂 分析项目结构</button>
+          <button class="hint-btn" data-prompt="帮我找出代码中的潜在 bug">🐛 查找 Bug</button>
+          <button class="hint-btn" data-prompt="帮我重构这个项目，提升代码质量">♻️ 重构代码</button>
+          <button class="hint-btn" data-prompt="帮我写单元测试">🧪 编写测试</button>
+        </div>
+      </div>
+
+      <!-- Messages Container -->
+      <div id="messages" class="messages-container" style="display:none;"></div>
+
+      <!-- Input Area -->
+      <div class="input-area">
+        <div class="input-wrapper">
+          <textarea id="prompt-input" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)" rows="1"></textarea>
+          <div class="input-actions">
+            <button id="abort-btn" class="action-btn abort-btn" style="display:none;" title="停止生成">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+            </button>
+            <button id="send-btn" class="action-btn send-btn" title="发送">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

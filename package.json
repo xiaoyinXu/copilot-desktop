@@ -1,0 +1,21 @@
+{
+  "name": "copilot-desktop",
+  "version": "1.0.0",
+  "description": "Desktop coding assistant powered by GitHub Copilot SDK",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron . --dev"
+  },
+  "keywords": ["copilot", "electron", "desktop", "ai", "coding-assistant"],
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "latest"
+  }
+}
