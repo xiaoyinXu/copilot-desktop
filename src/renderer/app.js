@@ -3,7 +3,7 @@
 
 /**
  * Copilot Desktop - Renderer
- * @typedef {{ init: () => Promise<any>, listModels: () => Promise<any>, createSession: (opts: any) => Promise<any>, send: (opts: any) => Promise<any>, abort: (opts: any) => Promise<any>, listSessions: () => Promise<any>, stop: () => Promise<any>, openFolder: () => Promise<string|null>, onEvent: (cb: (e: any) => void) => () => void }} CopilotAPI
+ * @typedef {{ init: () => Promise<any>, listModels: () => Promise<any>, createSession: (opts: any) => Promise<any>, send: (opts: any) => Promise<any>, abort: (opts: any) => Promise<any>, listSessions: () => Promise<any>, stop: () => Promise<any>, openFolder: () => Promise<string|null>, onEvent: (cb: (e: any) => void) => () => void, store: { listSessions: () => Promise<any>, saveSession: (opts: any) => Promise<any>, loadSession: (opts: any) => Promise<any>, deleteSession: (opts: any) => Promise<any> } }} CopilotAPI
  */
 
 /** @type {CopilotAPI} */
@@ -15,6 +15,8 @@ let currentCwd = null;
 let isProcessing = false;
 let streamingContent = "";
 let streamingEl = null;
+/** @type {Array<{role: string, content: string, timestamp: number}>} */
+let currentMessages = [];
 
 // --- DOM Elements ---
 const $messages = document.getElementById("messages");
@@ -44,6 +46,8 @@ async function init() {
         populateModels(modelsResult.models);
       }
     } catch {}
+    // Load persisted sessions into sidebar
+    await refreshSessionsList();
   } else {
     setStatus("error", `连接失败: ${result.error}`);
     showError(result.error);
@@ -87,6 +91,7 @@ async function createSession() {
   const result = await api.createSession(opts);
   if (result.success) {
     currentSessionId = result.sessionId;
+    currentMessages = [];
     $sessionInfo.textContent = `会话: ${currentSessionId.slice(0, 8)}...`;
     setStatus("connected", "就绪");
     // Show messages, hide welcome
@@ -116,6 +121,8 @@ async function sendMessage(prompt) {
 
   // Add user message
   addMessage("user", prompt);
+  currentMessages.push({ role: "user", content: prompt, timestamp: Date.now() });
+  persistCurrentSession();
 
   // Clear input
   $input.value = "";
@@ -124,8 +131,9 @@ async function sendMessage(prompt) {
   // Add typing indicator
   const typingEl = addTypingIndicator();
 
-  // Send to Copilot
-  const result = await api.send({ sessionId: currentSessionId, prompt });
+  // Send to Copilot (use SDK session ID if this is a restored session)
+  const sdkSid = sdkSessionMap[currentSessionId] || currentSessionId;
+  const result = await api.send({ sessionId: sdkSid, prompt });
   if (!result.success) {
     typingEl?.remove();
     isProcessing = false;
@@ -136,7 +144,9 @@ async function sendMessage(prompt) {
 
 // --- Event Handling ---
 api.onEvent((event) => {
-  if (event.sessionId !== currentSessionId) return;
+  // Match event to current session (could be SDK session ID for restored sessions)
+  const sdkSid = sdkSessionMap[currentSessionId] || currentSessionId;
+  if (event.sessionId !== currentSessionId && event.sessionId !== sdkSid) return;
 
   switch (event.type) {
     case "delta":
@@ -162,6 +172,9 @@ api.onEvent((event) => {
       } else {
         addMessage("assistant", event.content);
       }
+      // Persist assistant message
+      currentMessages.push({ role: "assistant", content: event.content, timestamp: Date.now() });
+      persistCurrentSession();
       scrollToBottom();
       break;
 
@@ -320,12 +333,14 @@ $sendBtn.addEventListener("click", () => {
 
 $abortBtn.addEventListener("click", async () => {
   if (currentSessionId) {
-    await api.abort({ sessionId: currentSessionId });
+    const sdkSid = sdkSessionMap[currentSessionId] || currentSessionId;
+    await api.abort({ sessionId: sdkSid });
   }
 });
 
 $newChatBtn.addEventListener("click", async () => {
   currentSessionId = null;
+  currentMessages = [];
   streamingEl = null;
   streamingContent = "";
   isProcessing = false;
@@ -334,6 +349,7 @@ $newChatBtn.addEventListener("click", async () => {
   $messages.innerHTML = "";
   $welcome.style.display = "flex";
   $sessionInfo.textContent = "新对话";
+  highlightActiveSession();
 });
 
 $openFolderBtn.addEventListener("click", async () => {
@@ -360,6 +376,136 @@ document.querySelectorAll(".hint-btn").forEach((btn) => {
     }
   });
 });
+
+// --- Session Persistence ---
+
+function persistCurrentSession() {
+  if (!currentSessionId || currentMessages.length === 0) return;
+  const model = $modelSelect.value;
+  api.store.saveSession({
+    sessionId: currentSessionId,
+    messages: currentMessages,
+    model,
+    cwd: currentCwd,
+  }).then(() => refreshSessionsList());
+}
+
+async function refreshSessionsList() {
+  try {
+    const result = await api.store.listSessions();
+    if (!result.success) return;
+    $sessionsList.innerHTML = "";
+    for (const meta of result.sessions) {
+      const item = document.createElement("div");
+      item.className = "session-item";
+      if (meta.sessionId === currentSessionId) {
+        item.classList.add("active");
+      }
+      item.dataset.sessionId = meta.sessionId;
+      item.title = meta.title + (meta.cwd ? `\n📂 ${meta.cwd}` : "");
+
+      const titleSpan = document.createElement("span");
+      titleSpan.className = "session-item-title";
+      titleSpan.textContent = meta.title;
+
+      const dateSpan = document.createElement("span");
+      dateSpan.className = "session-item-date";
+      dateSpan.textContent = formatDate(meta.updatedAt);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "session-delete-btn";
+      deleteBtn.title = "删除会话";
+      deleteBtn.innerHTML = "×";
+      deleteBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await api.store.deleteSession({ sessionId: meta.sessionId });
+        if (currentSessionId === meta.sessionId) {
+          $newChatBtn.click();
+        }
+        await refreshSessionsList();
+      });
+
+      item.appendChild(titleSpan);
+      item.appendChild(dateSpan);
+      item.appendChild(deleteBtn);
+
+      item.addEventListener("click", () => loadPersistedSession(meta.sessionId));
+      $sessionsList.appendChild(item);
+    }
+  } catch {}
+}
+
+async function loadPersistedSession(sessionId) {
+  try {
+    const result = await api.store.loadSession({ sessionId });
+    if (!result.success || !result.data) return;
+
+    const { meta, messages } = result.data;
+
+    // Create a new SDK session for this restored conversation
+    const model = meta.model || $modelSelect.value;
+    $modelSelect.value = model;
+    if (meta.cwd) {
+      currentCwd = meta.cwd;
+      const parts = meta.cwd.split("/");
+      $cwdLabel.textContent = parts[parts.length - 1] || meta.cwd;
+      $cwdLabel.title = meta.cwd;
+    }
+
+    const opts = { model };
+    if (currentCwd) opts.cwd = currentCwd;
+
+    setStatus("connecting", "正在恢复会话...");
+    const createResult = await api.createSession(opts);
+    if (!createResult.success) {
+      showError("恢复会话失败: " + createResult.error);
+      setStatus("error", createResult.error);
+      return;
+    }
+
+    // Use original sessionId for persistence continuity
+    currentSessionId = sessionId;
+    currentMessages = messages;
+
+    // Also track the SDK session mapping
+    sdkSessionMap[sessionId] = createResult.sessionId;
+
+    $sessionInfo.textContent = `会话: ${sessionId.slice(0, 8)}...`;
+    setStatus("connected", "就绪");
+
+    // Render messages
+    $welcome.style.display = "none";
+    $messages.style.display = "flex";
+    $messages.innerHTML = "";
+    for (const msg of messages) {
+      const el = addMessage(msg.role, "");
+      updateMessageContent(el, msg.content);
+    }
+    scrollToBottom();
+    highlightActiveSession();
+  } catch (err) {
+    showError("加载会话失败");
+  }
+}
+
+function highlightActiveSession() {
+  document.querySelectorAll(".session-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.sessionId === currentSessionId);
+  });
+}
+
+function formatDate(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) {
+    return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+}
+
+/** Maps persisted sessionId → SDK sessionId for restored sessions */
+const sdkSessionMap = {};
 
 // --- Start ---
 init();

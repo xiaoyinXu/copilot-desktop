@@ -17,4 +17,19 @@ contextBridge.exposeInMainWorld("copilot", {
     ipcRenderer.on("copilot:event", handler);
     return () => ipcRenderer.removeListener("copilot:event", handler);
   },
+  // Session persistence
+  store: {
+    listSessions: () => ipcRenderer.invoke("store:list-sessions"),
+    saveSession: (opts: {
+      sessionId: string;
+      messages: any[];
+      model: string;
+      cwd: string | null;
+      title?: string;
+    }) => ipcRenderer.invoke("store:save-session", opts),
+    loadSession: (opts: { sessionId: string }) =>
+      ipcRenderer.invoke("store:load-session", opts),
+    deleteSession: (opts: { sessionId: string }) =>
+      ipcRenderer.invoke("store:delete-session", opts),
+  },
 });

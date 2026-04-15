@@ -2,6 +2,12 @@ import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import * as path from "path";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
+import {
+  listPersistedSessions,
+  saveSession,
+  loadSession,
+  deleteSession,
+} from "./sessionStore";
 
 // Dynamic import for ESM SDK
 let CopilotClient: any;
@@ -227,6 +233,63 @@ ipcMain.handle("copilot:stop", async () => {
     client = null;
   }
   return { success: true };
+});
+
+// --- Session Persistence IPC Handlers ---
+
+ipcMain.handle("store:list-sessions", async () => {
+  try {
+    const sessions = listPersistedSessions();
+    return { success: true, sessions };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle(
+  "store:save-session",
+  async (
+    _event,
+    {
+      sessionId,
+      messages,
+      model,
+      cwd,
+      title,
+    }: {
+      sessionId: string;
+      messages: any[];
+      model: string;
+      cwd: string | null;
+      title?: string;
+    }
+  ) => {
+    try {
+      saveSession(sessionId, messages, { model, cwd, title });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+);
+
+ipcMain.handle("store:load-session", async (_event, { sessionId }: { sessionId: string }) => {
+  try {
+    const data = loadSession(sessionId);
+    if (!data) return { success: false, error: "Session not found" };
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("store:delete-session", async (_event, { sessionId }: { sessionId: string }) => {
+  try {
+    deleteSession(sessionId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
 });
 
 // --- App Lifecycle ---
