@@ -496,6 +496,20 @@ function handleSlashKeydown(e) {
   return false;
 }
 
+/** Try to match and run a slash command from the current input. Returns true if handled. */
+function tryExecuteSlashFromInput() {
+  const val = $input.value.trim();
+  const exactCmd = slashCommands.find((c) => val === c.command || val.startsWith(c.command + " "));
+  if (exactCmd) {
+    hideSlashPopup();
+    $input.value = "";
+    autoResize();
+    exactCmd.handler();
+    return true;
+  }
+  return false;
+}
+
 // --- Event Listeners ---
 $input.addEventListener("input", () => {
   autoResize();
@@ -506,37 +520,20 @@ $input.addEventListener("keydown", (e) => {
   if (handleSlashKeydown(e)) return;
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
-    const val = $input.value.trim();
-    // Check if input matches a slash command exactly
-    const exactCmd = slashCommands.find((c) => val === c.command || val.startsWith(c.command + " "));
-    if (exactCmd) {
-      hideSlashPopup();
-      $input.value = "";
-      autoResize();
-      exactCmd.handler();
-      return;
-    }
+    if (tryExecuteSlashFromInput()) return;
     sendMessage($input.value);
   }
 });
 
 // Close slash popup on outside click
 document.addEventListener("click", (e) => {
-  if (!$slashPopup.contains(e.target) && e.target !== $input) {
+  if ($slashPopup.style.display !== "none" && !$slashPopup.contains(e.target) && e.target !== $input) {
     hideSlashPopup();
   }
 });
 
 $sendBtn.addEventListener("click", () => {
-  const val = $input.value.trim();
-  const exactCmd = slashCommands.find((c) => val === c.command || val.startsWith(c.command + " "));
-  if (exactCmd) {
-    hideSlashPopup();
-    $input.value = "";
-    autoResize();
-    exactCmd.handler();
-    return;
-  }
+  if (tryExecuteSlashFromInput()) return;
   sendMessage($input.value);
 });
 
