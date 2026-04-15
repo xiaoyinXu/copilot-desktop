@@ -193,9 +193,11 @@ ipcMain.handle(
         // Check for token usage in event data (SDK may provide it)
         const tokenUsage = event.data?.usage || event.data?.tokenUsage;
         if (tokenUsage && usage) {
-          if (tokenUsage.total_tokens) usage.contextTokensUsed = tokenUsage.total_tokens;
+          // Prefer prompt_tokens + completion_tokens; fall back to total_tokens
           if (tokenUsage.prompt_tokens !== undefined && tokenUsage.completion_tokens !== undefined) {
             usage.contextTokensUsed = tokenUsage.prompt_tokens + tokenUsage.completion_tokens;
+          } else if (tokenUsage.total_tokens) {
+            usage.contextTokensUsed = tokenUsage.total_tokens;
           }
         }
 
@@ -305,12 +307,12 @@ ipcMain.handle("copilot:get-usage", async (_event, { sessionId }: { sessionId?: 
       try {
         const sdkUsage = await client.getUsage();
         if (sdkUsage) {
-          if (sdkUsage.premiumRequestsRemaining !== undefined) {
-            premiumUsage.premiumRequestsTotal =
-              sdkUsage.premiumRequestsRemaining + (premiumUsage.premiumRequestsUsed || 0);
-          }
+          // Prefer premiumRequestsLimit; fall back to calculating from remaining
           if (sdkUsage.premiumRequestsLimit !== undefined) {
             premiumUsage.premiumRequestsTotal = sdkUsage.premiumRequestsLimit;
+          } else if (sdkUsage.premiumRequestsRemaining !== undefined) {
+            premiumUsage.premiumRequestsTotal =
+              sdkUsage.premiumRequestsRemaining + (premiumUsage.premiumRequestsUsed || 0);
           }
           if (sdkUsage.premiumRequestsUsed !== undefined) {
             premiumUsage.premiumRequestsUsed = sdkUsage.premiumRequestsUsed;
