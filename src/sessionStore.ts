@@ -22,6 +22,11 @@ function ensureDirs(): void {
   }
 }
 
+// --- Constants ---
+
+const DEFAULT_SESSION_TITLE = "新对话";
+const TITLE_MAX_LENGTH = 50;
+
 // --- Types ---
 
 export interface ChatMessage {
@@ -89,7 +94,7 @@ export function saveSession(
 
   const title =
     meta.title ||
-    (messages.find((m) => m.role === "user")?.content.slice(0, 50) || "新对话");
+    (messages.find((m) => m.role === "user")?.content.slice(0, TITLE_MAX_LENGTH) || DEFAULT_SESSION_TITLE);
 
   if (existing) {
     existing.updatedAt = now;

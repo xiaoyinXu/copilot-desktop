@@ -9,6 +9,9 @@
 /** @type {CopilotAPI} */
 const api = /** @type {any} */ (window).copilot;
 
+/** Maps persisted sessionId → SDK sessionId for restored sessions */
+const sdkSessionMap = {};
+
 // --- State ---
 let currentSessionId = null;
 let currentCwd = null;
@@ -387,7 +390,7 @@ function persistCurrentSession() {
     messages: currentMessages,
     model,
     cwd: currentCwd,
-  }).then(() => refreshSessionsList());
+  }).then(() => refreshSessionsList()).catch(() => {});
 }
 
 async function refreshSessionsList() {
@@ -503,9 +506,6 @@ function formatDate(ts) {
   }
   return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
-
-/** Maps persisted sessionId → SDK sessionId for restored sessions */
-const sdkSessionMap = {};
 
 // --- Start ---
 init();
