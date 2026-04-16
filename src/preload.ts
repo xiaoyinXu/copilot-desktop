@@ -19,4 +19,9 @@ contextBridge.exposeInMainWorld("copilot", {
     ipcRenderer.on("copilot:event", handler);
     return () => ipcRenderer.removeListener("copilot:event", handler);
   },
+  // History persistence
+  historyList: () => ipcRenderer.invoke("history:list"),
+  historyLoad: (opts: { id: string }) => ipcRenderer.invoke("history:load", opts),
+  historySave: (opts: { data: any }) => ipcRenderer.invoke("history:save", opts),
+  historyDelete: (opts: { id: string }) => ipcRenderer.invoke("history:delete", opts),
 });

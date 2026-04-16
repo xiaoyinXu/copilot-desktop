@@ -176,12 +176,51 @@ body {
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  position: relative;
 }
 .session-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .session-item.active { background: var(--accent-subtle); color: var(--accent); }
+
+.session-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.session-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.session-delete {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.session-item:hover .session-delete { display: inline-block; }
+.session-delete:hover { color: var(--red); background: var(--bg-active); }
+
+.history-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
 
 .sidebar-footer {
   padding: 12px 16px;

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import * as path from "path";
 import { execSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "fs";
 
 // Dynamic import for ESM SDK
 let CopilotClient: any;
@@ -339,6 +339,73 @@ ipcMain.handle("copilot:get-usage", async (_event, { sessionId }: { sessionId?: 
         resetAt: premiumUsage.resetAt,
       },
     };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// --- Chat History Persistence ---
+const HISTORY_DIR = path.join(app.getPath("home"), ".copilot-desktop", "history");
+
+function ensureHistoryDir() {
+  mkdirSync(HISTORY_DIR, { recursive: true });
+}
+
+ipcMain.handle("history:list", async () => {
+  try {
+    ensureHistoryDir();
+    const files = readdirSync(HISTORY_DIR).filter((f) => f.endsWith(".json"));
+    const items: any[] = [];
+    for (const file of files) {
+      try {
+        const raw = readFileSync(path.join(HISTORY_DIR, file), "utf-8");
+        const data = JSON.parse(raw);
+        items.push({
+          id: data.id,
+          title: data.title || "未命名对话",
+          model: data.model,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+          messageCount: data.messages?.length || 0,
+        });
+      } catch {}
+    }
+    items.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return { success: true, items };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("history:load", async (_event, { id }: { id: string }) => {
+  try {
+    ensureHistoryDir();
+    const filePath = path.join(HISTORY_DIR, `${id}.json`);
+    if (!existsSync(filePath)) throw new Error("History not found");
+    const raw = readFileSync(filePath, "utf-8");
+    return { success: true, data: JSON.parse(raw) };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("history:save", async (_event, { data }: { data: any }) => {
+  try {
+    ensureHistoryDir();
+    const filePath = path.join(HISTORY_DIR, `${data.id}.json`);
+    writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle("history:delete", async (_event, { id }: { id: string }) => {
+  try {
+    ensureHistoryDir();
+    const filePath = path.join(HISTORY_DIR, `${id}.json`);
+    if (existsSync(filePath)) unlinkSync(filePath);
+    return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };
   }

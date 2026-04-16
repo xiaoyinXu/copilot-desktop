@@ -3,7 +3,7 @@
 
 /**
  * Copilot Desktop - Renderer
- * @typedef {{ init: () => Promise<any>, listModels: () => Promise<any>, createSession: (opts: any) => Promise<any>, send: (opts: any) => Promise<any>, abort: (opts: any) => Promise<any>, listSessions: () => Promise<any>, getUsage: (opts: any) => Promise<any>, stop: () => Promise<any>, openFolder: () => Promise<string|null>, onEvent: (cb: (e: any) => void) => () => void }} CopilotAPI
+ * @typedef {{ init: () => Promise<any>, listModels: () => Promise<any>, createSession: (opts: any) => Promise<any>, send: (opts: any) => Promise<any>, abort: (opts: any) => Promise<any>, listSessions: () => Promise<any>, getUsage: (opts: any) => Promise<any>, stop: () => Promise<any>, openFolder: () => Promise<string|null>, onEvent: (cb: (e: any) => void) => () => void, historyList: () => Promise<any>, historyLoad: (opts: {id: string}) => Promise<any>, historySave: (opts: {data: any}) => Promise<any>, historyDelete: (opts: {id: string}) => Promise<any> }} CopilotAPI
  */
 
 /** @type {CopilotAPI} */
@@ -15,6 +15,10 @@ let currentCwd = null;
 let isProcessing = false;
 let streamingContent = "";
 let streamingEl = null;
+
+// --- History State ---
+let currentHistoryId = null;
+let currentMessages = []; // {role, content, timestamp}
 
 // --- DOM Elements ---
 const $messages = document.getElementById("messages");
@@ -45,6 +49,8 @@ let premiumTotal = 0;
 // --- Initialize ---
 async function init() {
   setStatus("connecting", "正在连接 Copilot...");
+  // Load history list while connecting
+  loadHistoryList();
   const result = await api.init();
   if (result.success) {
     setStatus("connected", "已连接");
@@ -154,6 +160,164 @@ async function refreshUsage() {
   } catch {}
 }
 
+// --- History Persistence ---
+function generateHistoryId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function generateTitle(firstMessage) {
+  if (!firstMessage) return "新对话";
+  const text = firstMessage.trim();
+  if (text.length <= 30) return text;
+  return text.slice(0, 30) + "...";
+}
+
+async function saveCurrentHistory() {
+  if (!currentHistoryId || currentMessages.length === 0) return;
+  const firstUserMsg = currentMessages.find((m) => m.role === "user");
+  const data = {
+    id: currentHistoryId,
+    title: generateTitle(firstUserMsg?.content),
+    model: $modelSelect.value,
+    cwd: currentCwd,
+    createdAt: currentMessages[0]?.timestamp || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    messages: currentMessages,
+  };
+  await api.historySave({ data });
+}
+
+async function loadHistoryList() {
+  try {
+    const result = await api.historyList();
+    if (result.success) {
+      renderHistoryList(result.items);
+    }
+  } catch {}
+}
+
+function renderHistoryList(items) {
+  $sessionsList.innerHTML = "";
+  if (!items || items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = "暂无历史会话";
+    $sessionsList.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    const el = document.createElement("div");
+    el.className = "session-item" + (item.id === currentHistoryId ? " active" : "");
+    el.dataset.id = item.id;
+
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "session-title";
+    titleSpan.textContent = item.title;
+    titleSpan.title = item.title;
+
+    const metaSpan = document.createElement("span");
+    metaSpan.className = "session-meta";
+    metaSpan.textContent = formatRelativeTime(item.updatedAt);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "session-delete";
+    deleteBtn.title = "删除";
+    deleteBtn.innerHTML = "×";
+    deleteBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await api.historyDelete({ id: item.id });
+      if (currentHistoryId === item.id) {
+        startNewChat();
+      }
+      loadHistoryList();
+    });
+
+    el.appendChild(titleSpan);
+    el.appendChild(metaSpan);
+    el.appendChild(deleteBtn);
+    el.addEventListener("click", () => loadHistory(item.id));
+    $sessionsList.appendChild(el);
+  }
+}
+
+function formatRelativeTime(isoString) {
+  if (!isoString) return "";
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins} 分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return new Date(isoString).toLocaleDateString("zh-CN");
+}
+
+async function loadHistory(id) {
+  try {
+    const result = await api.historyLoad({ id });
+    if (!result.success) return;
+    const data = result.data;
+
+    // Reset current state
+    currentSessionId = null;
+    currentHistoryId = data.id;
+    currentMessages = data.messages || [];
+    streamingEl = null;
+    streamingContent = "";
+    isProcessing = false;
+    updateInputState();
+
+    // Restore model selection if available
+    if (data.model) {
+      for (const opt of $modelSelect.options) {
+        if (opt.value === data.model) {
+          $modelSelect.value = data.model;
+          break;
+        }
+      }
+    }
+    // Restore cwd if available
+    if (data.cwd) {
+      currentCwd = data.cwd;
+      const parts = data.cwd.split("/");
+      $cwdLabel.textContent = parts[parts.length - 1] || data.cwd;
+      $cwdLabel.title = data.cwd;
+    }
+
+    // Render messages
+    $welcome.style.display = "none";
+    $messages.style.display = "flex";
+    $messages.innerHTML = "";
+    $sessionInfo.textContent = data.title || "对话";
+
+    for (const msg of currentMessages) {
+      const el = addMessage(msg.role, "");
+      updateMessageContent(el, msg.content);
+    }
+    scrollToBottom();
+
+    // Update sidebar active state
+    loadHistoryList();
+  } catch {}
+}
+
+function startNewChat() {
+  currentSessionId = null;
+  currentHistoryId = null;
+  currentMessages = [];
+  streamingEl = null;
+  streamingContent = "";
+  isProcessing = false;
+  updateInputState();
+  $messages.style.display = "none";
+  $messages.innerHTML = "";
+  $welcome.style.display = "flex";
+  $sessionInfo.textContent = "新对话";
+  updateContextUsage(0, 0);
+  loadHistoryList();
+}
+
 // --- Session Management ---
 async function createSession() {
   const model = $modelSelect.value;
@@ -189,11 +353,20 @@ async function sendMessage(prompt) {
     if (!ok) return;
   }
 
+  // Initialize history tracking for new conversations
+  if (!currentHistoryId) {
+    currentHistoryId = generateHistoryId();
+    currentMessages = [];
+  }
+
   isProcessing = true;
   updateInputState();
 
   // Add user message
   addMessage("user", prompt);
+  currentMessages.push({ role: "user", content: prompt, timestamp: new Date().toISOString() });
+  saveCurrentHistory();
+  loadHistoryList();
 
   // Clear input
   $input.value = "";
@@ -240,6 +413,11 @@ api.onEvent((event) => {
       } else {
         addMessage("assistant", event.content);
       }
+      // Save assistant message to history
+      if (currentHistoryId && event.content) {
+        currentMessages.push({ role: "assistant", content: event.content, timestamp: new Date().toISOString() });
+        saveCurrentHistory();
+      }
       scrollToBottom();
       break;
 
@@ -266,6 +444,7 @@ api.onEvent((event) => {
       updateInputState();
       removeTypingIndicator();
       refreshUsage();
+      loadHistoryList();
       break;
   }
 });
@@ -629,16 +808,7 @@ $abortBtn.addEventListener("click", async () => {
 });
 
 $newChatBtn.addEventListener("click", async () => {
-  currentSessionId = null;
-  streamingEl = null;
-  streamingContent = "";
-  isProcessing = false;
-  updateInputState();
-  $messages.style.display = "none";
-  $messages.innerHTML = "";
-  $welcome.style.display = "flex";
-  $sessionInfo.textContent = "新对话";
-  updateContextUsage(0, 0);
+  startNewChat();
 });
 
 $openFolderBtn.addEventListener("click", async () => {
