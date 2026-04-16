@@ -304,17 +304,236 @@ function showError(msg) {
   setTimeout(() => toast.remove(), 5000);
 }
 
-// --- Event Listeners ---
-$input.addEventListener("input", autoResize);
+// --- Slash Commands ---
+const $slashPopup = document.getElementById("slash-popup");
+const $slashList = document.getElementById("slash-list");
+let slashSelectedIndex = 0;
 
-$input.addEventListener("keydown", (e) => {
+/** @type {Array<{command: string, label: string, description: string, handler: () => void}>} */
+const slashCommands = [
+  {
+    command: "/help",
+    label: "帮助",
+    description: "显示所有可用的斜杠命令",
+    handler() {
+      ensureMessagesVisible();
+      const lines = slashCommands.map((c) => `**${c.command}** — ${c.description}`).join("\n");
+      addMessage("assistant", "");
+      const el = $messages.lastElementChild?.querySelector(".message-content");
+      if (el) updateMessageContent(el, "📋 **可用命令：**\n\n" + lines);
+      scrollToBottom();
+    },
+  },
+  {
+    command: "/clear",
+    label: "清除",
+    description: "清除当前对话的消息记录",
+    handler() {
+      if ($messages.style.display !== "none") {
+        $messages.innerHTML = "";
+        streamingEl = null;
+        streamingContent = "";
+      }
+    },
+  },
+  {
+    command: "/new",
+    label: "新建对话",
+    description: "开始一个全新的对话",
+    handler() {
+      $newChatBtn.click();
+    },
+  },
+  {
+    command: "/model",
+    label: "切换模型",
+    description: "切换到下一个可用的 AI 模型",
+    handler() {
+      const options = Array.from($modelSelect.options);
+      if (options.length === 0) return;
+      const currentIdx = $modelSelect.selectedIndex;
+      const nextIdx = (currentIdx + 1) % options.length;
+      $modelSelect.selectedIndex = nextIdx;
+      ensureMessagesVisible();
+      addMessage("assistant", "");
+      const el = $messages.lastElementChild?.querySelector(".message-content");
+      if (el) updateMessageContent(el, `🔄 模型已切换为 **${options[nextIdx].textContent}**`);
+      scrollToBottom();
+    },
+  },
+  {
+    command: "/compact",
+    label: "总结对话",
+    description: "请求 Copilot 总结当前对话",
+    handler() {
+      const prompt = "请简要总结我们到目前为止的对话内容，列出关键要点。";
+      sendMessage(prompt);
+    },
+  },
+  {
+    command: "/status",
+    label: "状态",
+    description: "显示当前连接和会话状态",
+    handler() {
+      ensureMessagesVisible();
+      const statusInfo = [
+        `**连接状态：** ${$statusText.textContent}`,
+        `**当前会话：** ${currentSessionId ? currentSessionId.slice(0, 12) + "..." : "无"}`,
+        `**工作目录：** ${currentCwd || "未设置"}`,
+        `**当前模型：** ${$modelSelect.options[$modelSelect.selectedIndex]?.textContent || "未知"}`,
+      ].join("\n");
+      addMessage("assistant", "");
+      const el = $messages.lastElementChild?.querySelector(".message-content");
+      if (el) updateMessageContent(el, "ℹ️ **当前状态**\n\n" + statusInfo);
+      scrollToBottom();
+    },
+  },
+];
+
+function ensureMessagesVisible() {
+  if ($messages.style.display === "none") {
+    $welcome.style.display = "none";
+    $messages.style.display = "flex";
+  }
+}
+
+function getFilteredCommands(query) {
+  const q = query.toLowerCase();
+  return slashCommands.filter(
+    (c) => c.command.includes(q) || c.label.includes(q) || c.description.includes(q)
+  );
+}
+
+function showSlashPopup(filter) {
+  const filtered = getFilteredCommands(filter);
+  if (filtered.length === 0) {
+    hideSlashPopup();
+    return;
+  }
+  slashSelectedIndex = 0;
+  renderSlashList(filtered);
+  $slashPopup.style.display = "block";
+}
+
+function hideSlashPopup() {
+  $slashPopup.style.display = "none";
+  slashSelectedIndex = 0;
+}
+
+function renderSlashList(filtered) {
+  $slashList.innerHTML = "";
+  filtered.forEach((cmd, idx) => {
+    const item = document.createElement("div");
+    item.className = "slash-item" + (idx === slashSelectedIndex ? " selected" : "");
+    item.innerHTML = `
+      <span class="slash-cmd">${escapeHtml(cmd.command)}</span>
+      <span class="slash-label">${escapeHtml(cmd.label)}</span>
+      <span class="slash-desc">${escapeHtml(cmd.description)}</span>
+    `;
+    item.addEventListener("mouseenter", () => {
+      slashSelectedIndex = idx;
+      renderSlashList(filtered);
+    });
+    item.addEventListener("click", (e) => {
+      e.preventDefault();
+      executeSlashCommand(cmd);
+    });
+    $slashList.appendChild(item);
+  });
+}
+
+function executeSlashCommand(cmd) {
+  hideSlashPopup();
+  $input.value = "";
+  autoResize();
+  cmd.handler();
+  $input.focus();
+}
+
+function handleSlashInput() {
+  const val = $input.value;
+  if (val.startsWith("/")) {
+    showSlashPopup(val);
+  } else {
+    hideSlashPopup();
+  }
+}
+
+function handleSlashKeydown(e) {
+  if ($slashPopup.style.display === "none") return false;
+
+  const filtered = getFilteredCommands($input.value);
+  if (filtered.length === 0) return false;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    slashSelectedIndex = (slashSelectedIndex + 1) % filtered.length;
+    renderSlashList(filtered);
+    return true;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    slashSelectedIndex = (slashSelectedIndex - 1 + filtered.length) % filtered.length;
+    renderSlashList(filtered);
+    return true;
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
+    executeSlashCommand(filtered[slashSelectedIndex]);
+    return true;
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    hideSlashPopup();
+    return true;
+  }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    $input.value = filtered[slashSelectedIndex].command + " ";
+    handleSlashInput();
+    return true;
+  }
+  return false;
+}
+
+/** Try to match and run a slash command from the current input. Returns true if handled. */
+function tryExecuteSlashFromInput() {
+  const val = $input.value.trim();
+  const exactCmd = slashCommands.find((c) => val === c.command || val.startsWith(c.command + " "));
+  if (exactCmd) {
+    hideSlashPopup();
+    $input.value = "";
+    autoResize();
+    exactCmd.handler();
+    return true;
+  }
+  return false;
+}
+
+// --- Event Listeners ---
+$input.addEventListener("input", () => {
+  autoResize();
+  handleSlashInput();
+});
+
+$input.addEventListener("keydown", (e) => {
+  if (handleSlashKeydown(e)) return;
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (tryExecuteSlashFromInput()) return;
     sendMessage($input.value);
   }
 });
 
+// Close slash popup on outside click
+document.addEventListener("click", (e) => {
+  if ($slashPopup.style.display !== "none" && !$slashPopup.contains(e.target) && e.target !== $input) {
+    hideSlashPopup();
+  }
+});
+
 $sendBtn.addEventListener("click", () => {
+  if (tryExecuteSlashFromInput()) return;
   sendMessage($input.value);
 });
 
