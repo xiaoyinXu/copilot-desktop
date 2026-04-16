@@ -50,6 +50,33 @@
         <div id="sessions-list"></div>
       </div>
 
+      <div class="sidebar-section usage-section">
+        <div class="section-label">使用情况</div>
+
+        <!-- Context Usage -->
+        <div class="usage-item" id="context-usage">
+          <div class="usage-header">
+            <span class="usage-label">上下文</span>
+            <span class="usage-value" id="context-usage-text">0 / 0 tokens</span>
+          </div>
+          <div class="usage-bar">
+            <div class="usage-bar-fill" id="context-usage-bar" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Premium Requests -->
+        <div class="usage-item" id="premium-usage">
+          <div class="usage-header">
+            <span class="usage-label">Premium 请求</span>
+            <span class="usage-value" id="premium-usage-text">0 已用</span>
+          </div>
+          <div class="usage-bar">
+            <div class="usage-bar-fill premium" id="premium-usage-bar" style="width: 0%"></div>
+          </div>
+          <div class="usage-hint" id="premium-reset-hint"></div>
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <div id="status" class="status-indicator">
           <span class="status-dot"></span>

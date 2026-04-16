@@ -9,6 +9,50 @@ let approveAll: any;
 let client: any;
 const sessions = new Map<string, any>();
 
+// --- Usage Tracking ---
+interface SessionUsage {
+  contextTokensUsed: number;
+  contextTokensTotal: number;
+  messagesCount: number;
+}
+const sessionUsage = new Map<string, SessionUsage>();
+
+interface PremiumUsage {
+  premiumRequestsUsed: number;
+  premiumRequestsTotal: number;
+  resetAt: string | null;
+}
+let premiumUsage: PremiumUsage = {
+  premiumRequestsUsed: 0,
+  premiumRequestsTotal: 0,
+  resetAt: null,
+};
+
+// Rough token estimation: ~4 chars per token for mixed CJK/English
+function estimateTokens(text: string): number {
+  if (!text) return 0;
+  // CJK chars ≈ 1-2 tokens each, ASCII ≈ 0.25 tokens per char
+  let tokens = 0;
+  for (const ch of text) {
+    if (ch.charCodeAt(0) > 0x2e80) {
+      tokens += 1.5; // CJK characters
+    } else {
+      tokens += 0.25; // ASCII/Latin
+    }
+  }
+  return Math.ceil(tokens);
+}
+
+function getDefaultContextLimit(model: string): number {
+  const modelLower = (model || "").toLowerCase();
+  if (modelLower.includes("gpt-5")) return 256000;
+  if (modelLower.includes("gpt-4.1")) return 1048576;
+  if (modelLower.includes("claude-sonnet-4.5")) return 200000;
+  if (modelLower.includes("claude-sonnet-4")) return 200000;
+  if (modelLower.includes("claude")) return 200000;
+  return 128000;
+}
+
 async function loadSDK() {
   const sdk = await import("@github/copilot-sdk");
   CopilotClient = sdk.CopilotClient;
@@ -121,6 +165,14 @@ ipcMain.handle(
       const sid = session.sessionId;
       sessions.set(sid, session);
 
+      // Initialize usage tracking for this session
+      const contextLimit = getDefaultContextLimit(model || "claude-sonnet-4.5");
+      sessionUsage.set(sid, {
+        contextTokensUsed: 0,
+        contextTokensTotal: contextLimit,
+        messagesCount: 0,
+      });
+
       // Wire up event forwarding to renderer
       session.on("assistant.message_delta", (event: any) => {
         mainWindow?.webContents.send("copilot:event", {
@@ -131,11 +183,41 @@ ipcMain.handle(
       });
 
       session.on("assistant.message", (event: any) => {
+        // Track assistant message tokens
+        const usage = sessionUsage.get(sid);
+        if (usage && event.data.content) {
+          usage.contextTokensUsed += estimateTokens(event.data.content);
+          usage.messagesCount++;
+        }
+
+        // Check for token usage in event data (SDK may provide it)
+        const tokenUsage = event.data?.usage || event.data?.tokenUsage;
+        if (tokenUsage && usage) {
+          // Prefer prompt_tokens + completion_tokens; fall back to total_tokens
+          if (tokenUsage.prompt_tokens !== undefined && tokenUsage.completion_tokens !== undefined) {
+            usage.contextTokensUsed = tokenUsage.prompt_tokens + tokenUsage.completion_tokens;
+          } else if (tokenUsage.total_tokens) {
+            usage.contextTokensUsed = tokenUsage.total_tokens;
+          }
+        }
+
         mainWindow?.webContents.send("copilot:event", {
           sessionId: sid,
           type: "message",
           content: event.data.content,
         });
+
+        // Forward updated usage info
+        if (usage) {
+          mainWindow?.webContents.send("copilot:event", {
+            sessionId: sid,
+            type: "usage_update",
+            context: {
+              used: usage.contextTokensUsed,
+              total: usage.contextTokensTotal,
+            },
+          });
+        }
       });
 
       session.on("tool.execution_start", (event: any) => {
@@ -176,6 +258,17 @@ ipcMain.handle(
     try {
       const session = sessions.get(sessionId);
       if (!session) throw new Error("Session not found");
+
+      // Track user message tokens
+      const usage = sessionUsage.get(sessionId);
+      if (usage) {
+        usage.contextTokensUsed += estimateTokens(prompt);
+        usage.messagesCount++;
+      }
+
+      // Track premium request usage
+      premiumUsage.premiumRequestsUsed++;
+
       await session.send({ prompt });
       return { success: true };
     } catch (err: any) {
@@ -205,6 +298,52 @@ ipcMain.handle("copilot:list-sessions", async () => {
   }
 });
 
+ipcMain.handle("copilot:get-usage", async (_event, { sessionId }: { sessionId?: string }) => {
+  try {
+    const contextUsage = sessionId ? sessionUsage.get(sessionId) : null;
+
+    // Try to get premium usage from client if available
+    if (client && typeof client.getUsage === "function") {
+      try {
+        const sdkUsage = await client.getUsage();
+        if (sdkUsage) {
+          // Prefer premiumRequestsLimit; fall back to calculating from remaining
+          if (sdkUsage.premiumRequestsLimit !== undefined) {
+            premiumUsage.premiumRequestsTotal = sdkUsage.premiumRequestsLimit;
+          } else if (sdkUsage.premiumRequestsRemaining !== undefined) {
+            premiumUsage.premiumRequestsTotal =
+              sdkUsage.premiumRequestsRemaining + (premiumUsage.premiumRequestsUsed || 0);
+          }
+          if (sdkUsage.premiumRequestsUsed !== undefined) {
+            premiumUsage.premiumRequestsUsed = sdkUsage.premiumRequestsUsed;
+          }
+          if (sdkUsage.resetAt) {
+            premiumUsage.resetAt = sdkUsage.resetAt;
+          }
+        }
+      } catch {}
+    }
+
+    return {
+      success: true,
+      context: contextUsage
+        ? {
+            used: contextUsage.contextTokensUsed,
+            total: contextUsage.contextTokensTotal,
+            messagesCount: contextUsage.messagesCount,
+          }
+        : null,
+      premium: {
+        used: premiumUsage.premiumRequestsUsed,
+        total: premiumUsage.premiumRequestsTotal,
+        resetAt: premiumUsage.resetAt,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle("dialog:open-folder", async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ["openDirectory"],
@@ -220,6 +359,7 @@ ipcMain.handle("copilot:stop", async () => {
     } catch {}
   }
   sessions.clear();
+  sessionUsage.clear();
   if (client) {
     try {
       await client.stop();

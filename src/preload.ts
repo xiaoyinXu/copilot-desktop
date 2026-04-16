@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("copilot", {
   abort: (opts: { sessionId: string }) =>
     ipcRenderer.invoke("copilot:abort", opts),
   listSessions: () => ipcRenderer.invoke("copilot:list-sessions"),
+  getUsage: (opts: { sessionId?: string }) =>
+    ipcRenderer.invoke("copilot:get-usage", opts),
   stop: () => ipcRenderer.invoke("copilot:stop"),
   openFolder: () => ipcRenderer.invoke("dialog:open-folder"),
   onEvent: (callback: (event: any) => void) => {

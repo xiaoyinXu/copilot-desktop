@@ -3,7 +3,7 @@
 
 /**
  * Copilot Desktop - Renderer
- * @typedef {{ init: () => Promise<any>, listModels: () => Promise<any>, createSession: (opts: any) => Promise<any>, send: (opts: any) => Promise<any>, abort: (opts: any) => Promise<any>, listSessions: () => Promise<any>, stop: () => Promise<any>, openFolder: () => Promise<string|null>, onEvent: (cb: (e: any) => void) => () => void }} CopilotAPI
+ * @typedef {{ init: () => Promise<any>, listModels: () => Promise<any>, createSession: (opts: any) => Promise<any>, send: (opts: any) => Promise<any>, abort: (opts: any) => Promise<any>, listSessions: () => Promise<any>, getUsage: (opts: any) => Promise<any>, stop: () => Promise<any>, openFolder: () => Promise<string|null>, onEvent: (cb: (e: any) => void) => () => void }} CopilotAPI
  */
 
 /** @type {CopilotAPI} */
@@ -30,6 +30,17 @@ const $openFolderBtn = document.getElementById("open-folder-btn");
 const $newChatBtn = document.getElementById("new-chat-btn");
 const $sessionInfo = document.getElementById("session-info");
 const $sessionsList = document.getElementById("sessions-list");
+const $contextUsageText = document.getElementById("context-usage-text");
+const $contextUsageBar = document.getElementById("context-usage-bar");
+const $premiumUsageText = document.getElementById("premium-usage-text");
+const $premiumUsageBar = document.getElementById("premium-usage-bar");
+const $premiumResetHint = document.getElementById("premium-reset-hint");
+
+// --- Usage State ---
+let contextUsed = 0;
+let contextTotal = 0;
+let premiumUsed = 0;
+let premiumTotal = 0;
 
 // --- Initialize ---
 async function init() {
@@ -44,6 +55,8 @@ async function init() {
         populateModels(modelsResult.models);
       }
     } catch {}
+    // Refresh usage info
+    refreshUsage();
   } else {
     setStatus("error", `连接失败: ${result.error}`);
     showError(result.error);
@@ -77,6 +90,70 @@ function setStatus(state, text) {
   $statusText.textContent = text;
 }
 
+// --- Usage Display ---
+function formatTokenCount(count) {
+  if (count >= 1000000) return (count / 1000000).toFixed(1) + "M";
+  if (count >= 1000) return (count / 1000).toFixed(1) + "K";
+  return String(count);
+}
+
+function updateContextUsage(used, total) {
+  contextUsed = used;
+  contextTotal = total;
+  const pct = total > 0 ? Math.min((used / total) * 100, 100) : 0;
+  $contextUsageText.textContent = `${formatTokenCount(used)} / ${formatTokenCount(total)} tokens`;
+  $contextUsageBar.style.width = pct + "%";
+  // Change color when usage is high
+  if (pct > 90) {
+    $contextUsageBar.className = "usage-bar-fill danger";
+  } else if (pct > 70) {
+    $contextUsageBar.className = "usage-bar-fill warning";
+  } else {
+    $contextUsageBar.className = "usage-bar-fill";
+  }
+}
+
+function updatePremiumUsage(used, total, resetAt) {
+  premiumUsed = used;
+  premiumTotal = total;
+  const remaining = Math.max(0, total - used);
+  if (total > 0) {
+    const pct = Math.min((used / total) * 100, 100);
+    $premiumUsageText.textContent = `${remaining} 剩余 / ${total} 总计`;
+    $premiumUsageBar.style.width = pct + "%";
+    if (pct > 90) {
+      $premiumUsageBar.className = "usage-bar-fill premium danger";
+    } else if (pct > 70) {
+      $premiumUsageBar.className = "usage-bar-fill premium warning";
+    } else {
+      $premiumUsageBar.className = "usage-bar-fill premium";
+    }
+  } else {
+    $premiumUsageText.textContent = `${used} 已用`;
+    $premiumUsageBar.style.width = "0%";
+  }
+  if (resetAt) {
+    const resetDate = new Date(resetAt);
+    $premiumResetHint.textContent = `重置于 ${resetDate.toLocaleDateString("zh-CN")}`;
+  } else {
+    $premiumResetHint.textContent = "";
+  }
+}
+
+async function refreshUsage() {
+  try {
+    const result = await api.getUsage({ sessionId: currentSessionId });
+    if (result.success) {
+      if (result.context) {
+        updateContextUsage(result.context.used, result.context.total);
+      }
+      if (result.premium) {
+        updatePremiumUsage(result.premium.used, result.premium.total, result.premium.resetAt);
+      }
+    }
+  } catch {}
+}
+
 // --- Session Management ---
 async function createSession() {
   const model = $modelSelect.value;
@@ -93,6 +170,7 @@ async function createSession() {
     $welcome.style.display = "none";
     $messages.style.display = "flex";
     $messages.innerHTML = "";
+    refreshUsage();
     return true;
   } else {
     setStatus("error", result.error);
@@ -175,12 +253,19 @@ api.onEvent((event) => {
       markToolComplete(event.tool);
       break;
 
+    case "usage_update":
+      if (event.context) {
+        updateContextUsage(event.context.used, event.context.total);
+      }
+      break;
+
     case "idle":
       isProcessing = false;
       streamingEl = null;
       streamingContent = "";
       updateInputState();
       removeTypingIndicator();
+      refreshUsage();
       break;
   }
 });
@@ -553,6 +638,7 @@ $newChatBtn.addEventListener("click", async () => {
   $messages.innerHTML = "";
   $welcome.style.display = "flex";
   $sessionInfo.textContent = "新对话";
+  updateContextUsage(0, 0);
 });
 
 $openFolderBtn.addEventListener("click", async () => {
